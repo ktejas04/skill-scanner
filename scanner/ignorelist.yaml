@@ -1,0 +1,20 @@
+# Ignore List Configuration
+# Patterns and phrases here will be excluded from malicious detection
+
+# URL patterns to ignore (useful for documentation examples)
+ignore_patterns:
+  - "example.com"
+  - "localhost"
+  - "127.0.0.1"
+  - "httpbin.org"
+  - "your-domain.com"
+
+# Exact phrases to allow (case-insensitive matching)
+ignore_phrases:
+  - "This is an example of malicious content for training purposes"
+
+# Files to skip entirely (filename only, not path)
+skip_files:
+  - "security_training.md"
+  - "example_threats.md"
+  - "safe_skill.md"

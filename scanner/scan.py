@@ -9,12 +9,70 @@ import json
 import re
 from pathlib import Path
 
+import yaml
 from groq import Groq
 
 
 # Configuration
 SKILLS_DIR = "skills"
 MODEL_NAME = "llama-3.3-70b-versatile"
+IGNORE_LIST_PATH = Path(__file__).parent / "ignorelist.yaml"
+
+
+# =============================================================================
+# Ignore List Functions
+# =============================================================================
+
+def load_ignore_list() -> dict:
+    """Load ignore patterns from configuration file."""
+    if not IGNORE_LIST_PATH.exists():
+        return {"ignore_patterns": [], "ignore_phrases": [], "skip_files": []}
+    
+    try:
+        with open(IGNORE_LIST_PATH, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+        return {
+            "ignore_patterns": config.get("ignore_patterns", []),
+            "ignore_phrases": [p.lower() for p in config.get("ignore_phrases", [])],
+            "skip_files": config.get("skip_files", [])
+        }
+    except Exception as e:
+        print(f"Warning: Could not load ignore list: {e}")
+        return {"ignore_patterns": [], "ignore_phrases": [], "skip_files": []}
+
+
+def should_skip_file(filename: str, ignore_config: dict) -> bool:
+    """Check if file should be skipped entirely."""
+    return filename in ignore_config.get("skip_files", [])
+
+
+def filter_findings(findings: list, ignore_config: dict) -> list:
+    """Remove findings that match ignore patterns/phrases."""
+    filtered = []
+    for finding in findings:
+        text = finding.get("text", "").lower()
+        
+        # Check against ignore patterns (substring match)
+        pattern_match = any(
+            pattern.lower() in text 
+            for pattern in ignore_config.get("ignore_patterns", [])
+        )
+        if pattern_match:
+            continue
+        
+        # Check against exact phrases
+        phrase_match = text in ignore_config.get("ignore_phrases", [])
+        if phrase_match:
+            continue
+        
+        filtered.append(finding)
+    
+    return filtered
+
+
+# =============================================================================
+# Core Scanner Functions
+# =============================================================================
 
 DETECTION_PROMPT = """You are a security analyzer. Analyze the following text for malicious content.
 
@@ -150,6 +208,12 @@ def main() -> int:
     print("Scanning skills folder...")
     print()
     
+    # Load ignore list configuration
+    ignore_config = load_ignore_list()
+    if any(ignore_config.values()):
+        print("Loaded ignore list configuration")
+        print()
+    
     # Find skill files
     skill_files = get_skill_files(SKILLS_DIR)
     
@@ -164,7 +228,13 @@ def main() -> int:
     
     # Scan each file
     for filepath in skill_files:
-        print(f"Reading: {filepath}")
+        # Check if file should be skipped
+        if should_skip_file(filepath.name, ignore_config):
+            print(f"[SKIP] {filepath.name} (in ignore list)")
+            print("-" * 40)
+            continue
+        
+        print(f"Scanning: {filepath}")
         
         try:
             content = filepath.read_text(encoding="utf-8")
@@ -174,10 +244,25 @@ def main() -> int:
             continue
         
         result = analyze_content(content, filepath.name)
+        
+        # Filter out ignored findings
+        if result.get("findings"):
+            original_count = len(result["findings"])
+            result["findings"] = filter_findings(result["findings"], ignore_config)
+            filtered_count = original_count - len(result["findings"])
+            
+            if filtered_count > 0:
+                print(f"    ({filtered_count} finding(s) filtered by ignore list)")
+            
+            # Update is_malicious based on remaining findings
+            result["is_malicious"] = len(result["findings"]) > 0
+        
         print_results(filepath.name, result)
         
         if result.get("is_malicious"):
             found_malicious = True
+        
+        print("-" * 40)
     
     # Final verdict
     print()
