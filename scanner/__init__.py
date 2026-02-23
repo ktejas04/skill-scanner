@@ -22,6 +22,8 @@ from scanner.cache import (
     get_cache_stats,
 )
 
+from scanner.pr_comment import format_pr_comment
+
 __version__ = "1.0.0"
 __all__ = [
     "analyze_content",
@@ -36,4 +38,5 @@ __all__ = [
     "save_to_cache",
     "clear_cache",
     "get_cache_stats",
+    "format_pr_comment",
 ]
