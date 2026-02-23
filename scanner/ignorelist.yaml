@@ -17,4 +17,3 @@ ignore_phrases:
 skip_files:
   - "security_training.md"
   - "example_threats.md"
-  - "safe_skill.md"
