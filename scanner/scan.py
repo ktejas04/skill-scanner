@@ -12,6 +12,8 @@ from pathlib import Path
 import yaml
 from groq import Groq
 
+from scanner.cache import get_cached_result, save_to_cache, get_cache_stats, record_cache_hit, record_cache_miss, reset_cache_stats
+
 
 # Configuration
 SKILLS_DIR = "skills"
@@ -193,8 +195,26 @@ def get_skill_files(directory: str) -> list[Path]:
     return list(skills_path.glob("*.md"))
 
 
-def analyze_content(content: str, filename: str) -> dict:
-    """Send content to Groq for security analysis."""
+def analyze_content(content: str, filename: str, use_cache: bool = True) -> dict:
+    """Send content to Groq for security analysis.
+    
+    Args:
+        content: File content to analyze
+        filename: Name of the file being analyzed
+        use_cache: Whether to use cached results if available
+        
+    Returns:
+        Analysis result dict
+    """
+    # Check cache first
+    if use_cache:
+        cached = get_cached_result(content)
+        if cached:
+            cached["from_cache"] = True
+            record_cache_hit()
+            return cached
+        record_cache_miss()
+    
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         print("Error: GROQ_API_KEY environment variable not set")
@@ -241,6 +261,11 @@ def analyze_content(content: str, filename: str) -> dict:
             if isinstance(line, str) and line.startswith("LINE_"):
                 finding["line"] = int(line.replace("LINE_", ""))
         
+        # Save to cache if successful and caching enabled
+        if use_cache and not result.get("error"):
+            save_to_cache(content, result, filename)
+        
+        result["from_cache"] = False
         return result
         
     except json.JSONDecodeError as e:
@@ -288,6 +313,11 @@ def main() -> int:
     if any(ignore_config.values()):
         print("Loaded ignore list configuration")
     print("Loaded severity configuration")
+    
+    # Show cache stats
+    cache_stats = get_cache_stats()
+    if cache_stats["file_count"] > 0:
+        print(f"Cache: {cache_stats['file_count']} entries")
     print()
     
     # Find skill files
@@ -303,6 +333,8 @@ def main() -> int:
     # Track findings by severity
     all_findings = []
     found_error = False
+    cache_hits = 0
+    cache_misses = 0
     
     # Scan each file
     for filepath in skill_files:
@@ -322,6 +354,13 @@ def main() -> int:
             continue
         
         result = analyze_content(content, filepath.name)
+        
+        # Track cache hits/misses
+        if result.get("from_cache"):
+            cache_hits += 1
+            print("    [CACHE HIT] Using cached result")
+        else:
+            cache_misses += 1
         
         # Filter out ignored findings
         if result.get("findings"):
@@ -370,6 +409,11 @@ def main() -> int:
         if count > 0:
             emoji = get_severity_emoji(sev)
             print(f"  {emoji} {sev}: {count}")
+    
+    # Print cache summary
+    if cache_hits > 0 or cache_misses > 0:
+        print()
+        print(f"Cache: {cache_hits} hits, {cache_misses} misses")
     
     print("=" * 40)
     

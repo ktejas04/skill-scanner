@@ -15,6 +15,13 @@ from scanner.scan import (
     get_severity_emoji,
 )
 
+from scanner.cache import (
+    get_cached_result,
+    save_to_cache,
+    clear_cache,
+    get_cache_stats,
+)
+
 __version__ = "1.0.0"
 __all__ = [
     "analyze_content",
@@ -25,4 +32,8 @@ __all__ = [
     "load_severity_config",
     "apply_severity",
     "get_severity_emoji",
+    "get_cached_result",
+    "save_to_cache",
+    "clear_cache",
+    "get_cache_stats",
 ]

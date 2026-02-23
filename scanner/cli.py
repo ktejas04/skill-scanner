@@ -30,6 +30,7 @@ from scanner.scan import (
     DEFAULT_FAIL_ON,
     DEFAULT_WARN_ON,
 )
+from scanner.cache import get_cache_stats, clear_cache, reset_cache_stats
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -88,6 +89,18 @@ Examples:
     )
     
     parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable caching (always call AI)"
+    )
+    
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear the scan cache and exit"
+    )
+    
+    parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s 1.0.0"
@@ -101,7 +114,8 @@ def scan_directory(
     output_format: str = "text",
     verbose: bool = False,
     use_ignore_list: bool = True,
-    custom_ignore_file: str | None = None
+    custom_ignore_file: str | None = None,
+    use_cache: bool = True
 ) -> tuple[list, bool, dict]:
     """
     Scan a directory for malicious skill files.
@@ -111,6 +125,9 @@ def scan_directory(
     """
     results = []
     all_findings = []
+    
+    # Reset cache stats for this scan
+    reset_cache_stats()
     
     # Load configurations
     severity_config = load_severity_config()
@@ -178,7 +195,7 @@ def scan_directory(
             continue
         
         # Analyze content
-        result = analyze_content(content, filepath.name)
+        result = analyze_content(content, filepath.name, use_cache=use_cache)
         
         # Filter findings if using ignore list
         if result.get("findings") and use_ignore_list:
@@ -240,6 +257,12 @@ def main() -> int:
     parser = create_parser()
     args = parser.parse_args()
     
+    # Handle cache clear
+    if args.clear_cache:
+        cleared = clear_cache()
+        print(f"Cache cleared. Removed {cleared} entries.")
+        return 0
+    
     # Print header for text format
     if args.format == "text":
         print("=" * 50)
@@ -253,7 +276,8 @@ def main() -> int:
         output_format=args.format,
         verbose=args.verbose,
         use_ignore_list=not args.no_ignore,
-        custom_ignore_file=args.ignore_file
+        custom_ignore_file=args.ignore_file,
+        use_cache=not args.no_cache
     )
     
     # Handle JSON output
@@ -296,6 +320,12 @@ def main() -> int:
             if count > 0:
                 emoji = get_severity_emoji(sev)
                 print(f"  {emoji} {sev}: {count}")
+        
+        # Print cache stats if caching enabled
+        if not args.no_cache:
+            cache_stats = get_cache_stats()
+            print()
+            print(f"Cache: {cache_stats['hits']} hits, {cache_stats['misses']} misses")
         
         print("=" * 50)
         
