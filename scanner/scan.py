@@ -17,6 +17,18 @@ from groq import Groq
 SKILLS_DIR = "skills"
 MODEL_NAME = "llama-3.3-70b-versatile"
 IGNORE_LIST_PATH = Path(__file__).parent / "ignorelist.yaml"
+SEVERITY_CONFIG_PATH = Path(__file__).parent / "severity_config.yaml"
+
+# Default severity mapping (used if config file not found)
+DEFAULT_SEVERITY_MAPPING = {
+    "DATA_EXFILTRATION": "CRITICAL",
+    "SYSTEM_OVERRIDE": "CRITICAL",
+    "PROMPT_INJECTION": "HIGH",
+    "JAILBREAK": "HIGH",
+    "HIDDEN_COMMANDS": "MEDIUM",
+}
+DEFAULT_FAIL_ON = ["CRITICAL", "HIGH"]
+DEFAULT_WARN_ON = ["MEDIUM", "LOW"]
 
 
 # =============================================================================
@@ -39,6 +51,61 @@ def load_ignore_list() -> dict:
     except Exception as e:
         print(f"Warning: Could not load ignore list: {e}")
         return {"ignore_patterns": [], "ignore_phrases": [], "skip_files": []}
+
+
+# =============================================================================
+# Severity Functions
+# =============================================================================
+
+def load_severity_config() -> dict:
+    """Load severity configuration from file."""
+    if not SEVERITY_CONFIG_PATH.exists():
+        return {
+            "severity_mapping": DEFAULT_SEVERITY_MAPPING,
+            "default_severity": "HIGH",
+            "fail_on": DEFAULT_FAIL_ON,
+            "warn_on": DEFAULT_WARN_ON,
+        }
+    
+    try:
+        with open(SEVERITY_CONFIG_PATH, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+        return {
+            "severity_mapping": config.get("severity_mapping", DEFAULT_SEVERITY_MAPPING),
+            "default_severity": config.get("default_severity", "HIGH"),
+            "fail_on": config.get("thresholds", {}).get("fail_on", DEFAULT_FAIL_ON),
+            "warn_on": config.get("thresholds", {}).get("warn_on", DEFAULT_WARN_ON),
+        }
+    except Exception as e:
+        print(f"Warning: Could not load severity config: {e}")
+        return {
+            "severity_mapping": DEFAULT_SEVERITY_MAPPING,
+            "default_severity": "HIGH",
+            "fail_on": DEFAULT_FAIL_ON,
+            "warn_on": DEFAULT_WARN_ON,
+        }
+
+
+def apply_severity(findings: list, severity_config: dict) -> list:
+    """Add severity level to each finding based on threat type."""
+    mapping = severity_config.get("severity_mapping", DEFAULT_SEVERITY_MAPPING)
+    default = severity_config.get("default_severity", "HIGH")
+    
+    for finding in findings:
+        threat_type = finding.get("threat_type", "").upper().replace(" ", "_")
+        finding["severity"] = mapping.get(threat_type, default)
+    
+    return findings
+
+
+def get_severity_emoji(severity: str) -> str:
+    """Get emoji indicator for severity level."""
+    return {
+        "CRITICAL": "🔴",
+        "HIGH": "🟠",
+        "MEDIUM": "🟡",
+        "LOW": "🟢",
+    }.get(severity, "⚪")
 
 
 def should_skip_file(filename: str, ignore_config: dict) -> bool:
@@ -185,7 +252,7 @@ def analyze_content(content: str, filename: str) -> dict:
 
 
 
-def print_results(filename: str, result: dict) -> None:
+def print_results(filename: str, result: dict, show_severity: bool = True) -> None:
     """Print scan results for a file."""
     if result.get("error"):
         print(f"[!] ERROR {filename}: {result['error']}")
@@ -197,8 +264,14 @@ def print_results(filename: str, result: dict) -> None:
             line = finding.get("line", "?")
             text = finding.get("text", "Unknown")
             threat = finding.get("threat_type", "Unknown")
+            severity = finding.get("severity", "HIGH")
+            emoji = get_severity_emoji(severity) if show_severity else ""
+            
             print(f"    Line {line}: \"{text}\"")
-            print(f"    Threat: {threat}")
+            if show_severity:
+                print(f"    Threat: {threat} | Severity: {emoji} {severity}")
+            else:
+                print(f"    Threat: {threat}")
     else:
         print(f"[OK] {filename} - Safe")
 
@@ -208,11 +281,14 @@ def main() -> int:
     print("Scanning skills folder...")
     print()
     
-    # Load ignore list configuration
+    # Load configurations
     ignore_config = load_ignore_list()
+    severity_config = load_severity_config()
+    
     if any(ignore_config.values()):
         print("Loaded ignore list configuration")
-        print()
+    print("Loaded severity configuration")
+    print()
     
     # Find skill files
     skill_files = get_skill_files(SKILLS_DIR)
@@ -224,7 +300,9 @@ def main() -> int:
     print(f"Found {len(skill_files)} skill file(s) to scan")
     print()
     
-    found_malicious = False
+    # Track findings by severity
+    all_findings = []
+    found_error = False
     
     # Scan each file
     for filepath in skill_files:
@@ -240,7 +318,7 @@ def main() -> int:
             content = filepath.read_text(encoding="utf-8")
         except Exception as e:
             print(f"Error reading {filepath}: {e}")
-            found_malicious = True  # Fail closed
+            found_error = True  # Fail closed
             continue
         
         result = analyze_content(content, filepath.name)
@@ -254,23 +332,59 @@ def main() -> int:
             if filtered_count > 0:
                 print(f"    ({filtered_count} finding(s) filtered by ignore list)")
             
+            # Apply severity to findings
+            result["findings"] = apply_severity(result["findings"], severity_config)
+            
             # Update is_malicious based on remaining findings
             result["is_malicious"] = len(result["findings"]) > 0
+            
+            # Collect all findings for severity analysis
+            all_findings.extend(result["findings"])
         
-        print_results(filepath.name, result)
+        if result.get("error"):
+            found_error = True
         
-        if result.get("is_malicious"):
-            found_malicious = True
-        
+        print_results(filepath.name, result, show_severity=True)
         print("-" * 40)
     
-    # Final verdict
+    # Analyze findings by severity
+    fail_on = severity_config.get("fail_on", DEFAULT_FAIL_ON)
+    warn_on = severity_config.get("warn_on", DEFAULT_WARN_ON)
+    
+    critical_high = [f for f in all_findings if f.get("severity") in fail_on]
+    medium_low = [f for f in all_findings if f.get("severity") in warn_on]
+    
+    # Print severity summary
     print()
-    if found_malicious:
-        print("[X] Failing workflow - malicious content found")
+    print("=" * 40)
+    print("SEVERITY SUMMARY")
+    print("=" * 40)
+    
+    severity_counts = {}
+    for finding in all_findings:
+        sev = finding.get("severity", "UNKNOWN")
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+    
+    for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
+        count = severity_counts.get(sev, 0)
+        if count > 0:
+            emoji = get_severity_emoji(sev)
+            print(f"  {emoji} {sev}: {count}")
+    
+    print("=" * 40)
+    
+    # Determine exit code based on severity
+    if found_error:
+        print("\n[X] Failing workflow - errors encountered")
         return 1
+    elif critical_high:
+        print(f"\n[X] Failing workflow - {len(critical_high)} CRITICAL/HIGH severity issue(s) found")
+        return 1
+    elif medium_low:
+        print(f"\n[!] Warning - {len(medium_low)} MEDIUM/LOW severity issue(s) found (not blocking)")
+        return 0
     else:
-        print("[OK] All skill files are safe")
+        print("\n[OK] All skill files are safe")
         return 0
 
 

@@ -24,6 +24,11 @@ from scanner.scan import (
     load_ignore_list,
     should_skip_file,
     filter_findings,
+    load_severity_config,
+    apply_severity,
+    get_severity_emoji,
+    DEFAULT_FAIL_ON,
+    DEFAULT_WARN_ON,
 )
 
 
@@ -97,15 +102,18 @@ def scan_directory(
     verbose: bool = False,
     use_ignore_list: bool = True,
     custom_ignore_file: str | None = None
-) -> tuple[list, bool]:
+) -> tuple[list, bool, dict]:
     """
     Scan a directory for malicious skill files.
     
     Returns:
-        tuple: (results list, has_malicious bool)
+        tuple: (results list, has_critical_high bool, severity_summary dict)
     """
     results = []
-    has_malicious = False
+    all_findings = []
+    
+    # Load configurations
+    severity_config = load_severity_config()
     
     # Load ignore list
     if use_ignore_list:
@@ -134,7 +142,7 @@ def scan_directory(
     if not skill_files:
         if output_format == "text":
             print(f"No .md files found in {directory}/")
-        return [], False
+        return [], False, {}
     
     if output_format == "text" and verbose:
         print(f"Found {len(skill_files)} skill file(s) to scan")
@@ -179,15 +187,18 @@ def scan_directory(
             file_result["filtered_count"] = original_count - len(result["findings"])
             result["is_malicious"] = len(result["findings"]) > 0
         
+        # Apply severity to findings
+        if result.get("findings"):
+            result["findings"] = apply_severity(result["findings"], severity_config)
+            all_findings.extend(result["findings"])
+        
         # Update file result
         if result.get("error"):
             file_result["status"] = "error"
             file_result["error"] = result["error"]
-            has_malicious = True
         elif result.get("is_malicious"):
             file_result["status"] = "malicious"
             file_result["findings"] = result.get("findings", [])
-            has_malicious = True
         else:
             file_result["status"] = "safe"
         
@@ -198,14 +209,30 @@ def scan_directory(
             if file_result["status"] == "malicious":
                 print(f"\n[!] MALICIOUS: {filepath.name}")
                 for finding in file_result["findings"]:
+                    severity = finding.get("severity", "HIGH")
+                    emoji = get_severity_emoji(severity)
                     print(f"    Line {finding.get('line', '?')}: \"{finding.get('text', '')}\"")
-                    print(f"    Threat: {finding.get('threat_type', 'Unknown')}")
+                    print(f"    Threat: {finding.get('threat_type', 'Unknown')} | Severity: {emoji} {severity}")
             elif file_result["status"] == "error":
                 print(f"[!] ERROR: {filepath.name} - {file_result.get('error')}")
             elif verbose:
                 print(f"[OK] {filepath.name}")
     
-    return results, has_malicious
+    # Calculate severity summary
+    fail_on = severity_config.get("fail_on", DEFAULT_FAIL_ON)
+    warn_on = severity_config.get("warn_on", DEFAULT_WARN_ON)
+    
+    severity_summary = {
+        "CRITICAL": sum(1 for f in all_findings if f.get("severity") == "CRITICAL"),
+        "HIGH": sum(1 for f in all_findings if f.get("severity") == "HIGH"),
+        "MEDIUM": sum(1 for f in all_findings if f.get("severity") == "MEDIUM"),
+        "LOW": sum(1 for f in all_findings if f.get("severity") == "LOW"),
+    }
+    
+    has_critical_high = any(f.get("severity") in fail_on for f in all_findings)
+    has_errors = any(r["status"] == "error" for r in results)
+    
+    return results, has_critical_high or has_errors, severity_summary
 
 
 def main() -> int:
@@ -221,7 +248,7 @@ def main() -> int:
         print()
     
     # Run scan
-    results, has_malicious = scan_directory(
+    results, should_fail, severity_summary = scan_directory(
         directory=args.dir,
         output_format=args.format,
         verbose=args.verbose,
@@ -233,9 +260,10 @@ def main() -> int:
     if args.format == "json":
         output_data = {
             "directory": args.dir,
-            "has_malicious": has_malicious,
+            "has_malicious": should_fail,
             "file_count": len(results),
             "malicious_count": sum(1 for r in results if r["status"] == "malicious"),
+            "severity_summary": severity_summary,
             "files": results
         }
         json_output = json.dumps(output_data, indent=2)
@@ -259,14 +287,24 @@ def main() -> int:
         print(f"  Malicious: {malicious_count}")
         if skipped_count > 0:
             print(f"  Skipped: {skipped_count}")
+        
+        # Print severity breakdown
+        print()
+        print("Severity Breakdown:")
+        for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
+            count = severity_summary.get(sev, 0)
+            if count > 0:
+                emoji = get_severity_emoji(sev)
+                print(f"  {emoji} {sev}: {count}")
+        
         print("=" * 50)
         
-        if has_malicious:
-            print("\n[X] FAILED - Malicious content detected")
+        if should_fail:
+            print("\n[X] FAILED - CRITICAL/HIGH severity issues detected")
         else:
             print("\n[OK] PASSED - All files are safe")
     
-    return 1 if has_malicious else 0
+    return 1 if should_fail else 0
 
 
 if __name__ == "__main__":

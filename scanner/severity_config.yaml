@@ -1,0 +1,25 @@
+# Severity Configuration
+# Maps threat types to severity levels for nuanced security response
+
+# Severity levels for different threat types
+severity_mapping:
+  DATA_EXFILTRATION: CRITICAL    # External URL data sending - highest risk
+  SYSTEM_OVERRIDE: CRITICAL      # Admin/root claims - highest risk
+  PROMPT_INJECTION: HIGH         # Instruction override attempts
+  JAILBREAK: HIGH                # Restriction bypass attempts
+  HIDDEN_COMMANDS: MEDIUM        # Suspicious comments - needs review
+
+# Default severity for unknown threat types
+default_severity: HIGH
+
+# Action thresholds - determines workflow exit behavior
+thresholds:
+  # These severity levels cause workflow failure (exit code 1)
+  fail_on:
+    - CRITICAL
+    - HIGH
+  
+  # These severity levels only warn but don't fail (exit code 0)
+  warn_on:
+    - MEDIUM
+    - LOW

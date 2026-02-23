@@ -10,6 +10,9 @@ from scanner.scan import (
     load_ignore_list,
     should_skip_file,
     filter_findings,
+    load_severity_config,
+    apply_severity,
+    get_severity_emoji,
 )
 
 __version__ = "1.0.0"
@@ -19,4 +22,7 @@ __all__ = [
     "load_ignore_list",
     "should_skip_file",
     "filter_findings",
+    "load_severity_config",
+    "apply_severity",
+    "get_severity_emoji",
 ]
