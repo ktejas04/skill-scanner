@@ -18,15 +18,30 @@ This scanner acts as an automated security guardrail.
 
 ```
 .
-├── .github/workflows/
-│   └── scan-skills.yml      # GitHub Action workflow
+├── .github/
+│   └── workflows/
+│       └── scan-skills.yml         # GitHub Action workflow
+├── docs/
+│   └── test-outputs/
+│       ├── caching/
+│       ├── cli-tool/
+│       ├── ignore-list/
+│       ├── pr-comments/
+│       └── severity-levels/
 ├── scanner/
-│   └── scan.py              # Detection script
+│   ├── cache.py                   # Caching logic
+│   ├── cli.py                     # CLI entry point
+│   ├── ignorelist.yaml            # Ignore list config
+│   ├── pr_comment.py              # PR comment formatter
+│   ├── scan.py                    # Detection logic
+│   ├── severity_config.yaml       # Severity mapping config
+│   ├── __init__.py
+│   └── __main__.py                # python -m scanner entry
 ├── skills/
-│   ├── safe_skill.md        # Example safe skill
-│   ├── code_helper.md       # Example safe skill
-│   └── malicious_skill.md   # Example malicious skill (for testing, not in main branch)
-├── requirements.txt         # Python dependencies
+│   ├── code_helper.md             # Example safe skill
+│   └── safe_skill.md              # Example safe skill
+├── requirements.txt               # Python dependencies
+├── pyproject.toml                 # CLI install config
 └── README.md
 ```
 
